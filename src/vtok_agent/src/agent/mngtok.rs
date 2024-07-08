@@ -22,6 +22,8 @@ use vtok_rpc::api::schema;
 pub enum Error {
     AcmDbFetchError(Option<i32>, String),
     AcmDbParseError(serde_json::Error),
+    S3DbFetchError(Option<i32>, String),
+    S3DbParseError(serde_json::Error),
     AddTokenError(schema::ApiError),
     AwsCliExecError(std::io::Error),
     BadGroup(String),
@@ -40,7 +42,7 @@ pub enum Error {
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
-struct AcmDb {
+struct CryptoMaterialDb {
     certificate: String,
     #[serde(rename = "certificateChain")]
     certificate_chain: String,
@@ -50,6 +52,9 @@ struct AcmDb {
     encryption_method: String,
 }
 
+type AcmDb = CryptoMaterialDb;
+type S3Db = CryptoMaterialDb;
+
 type FileDb = Vec<schema::PrivateKey>;
 
 enum DbSource {
@@ -58,6 +63,11 @@ enum DbSource {
         db: AcmDb,
         bucket: String,
     },
+    S3 {
+        bucket_name: String,
+        db: S3Db,
+        path: String,
+    },
     File {
         db: FileDb,
     },
@@ -65,6 +75,7 @@ enum DbSource {
 
 impl DbSource {
     pub fn new(source_config: config::Source) -> Result<Self, Error> {
+        info!("Source CONFIG: {:?}", source_config);
         match source_config {
             config::Source::Acm {
                 certificate_arn,
@@ -76,7 +87,18 @@ impl DbSource {
                     cert_arn: certificate_arn,
                     bucket,
                 })
-            }
+            },
+            config::Source::S3 {
+                bucket_name,
+                path,
+            } => {
+                let path = path.unwrap_or(defs::DEFAULT_S3_PATH.to_string());
+                Ok(Self::S3 {
+                    db: Self::fetch_s3_db(bucket_name.as_str(), path.as_str())?,
+                    bucket_name: bucket_name,
+                    path: path,
+                })
+            },
             config::Source::FileDb { path } => Ok(Self::File {
                 db: Self::fetch_file_db(path.as_str())?,
             }),
@@ -94,7 +116,17 @@ impl DbSource {
                 let res = new_db != *db;
                 *db = new_db;
                 Ok(res)
-            }
+            },
+            Self::S3 {
+                ref mut db,
+                bucket_name,
+                path
+            } => {
+                let new_db = Self::fetch_s3_db(bucket_name, path)?;
+                let res = new_db != *db;
+                *db = new_db;
+                Ok(res)
+            },
             Self::File { .. } => Ok(false),
         }
     }
@@ -113,21 +145,34 @@ impl DbSource {
                     encrypted_pem_b64: db.encrypted_private_key.clone(),
                     cert_pem: optcerts,
                 }]
-            }
+            },
+            Self::S3 { db, .. } => {
+                let optcerts = self.cert_pem().map(|c| {
+                    let mut cc = c.to_string();
+                    self.cert_chain_pem().map(|ch| cc.push_str(ch));
+                    cc
+                });
+                vec![schema::PrivateKey {
+                    id: 1,
+                    label: "s3-key".to_string(),
+                    encrypted_pem_b64: db.encrypted_private_key.clone(),
+                    cert_pem: optcerts,
+                }]
+            },
             Self::File { db, .. } => db.as_slice().to_vec(),
         }
     }
 
     pub fn cert_pem(&self) -> Option<&str> {
         match self {
-            Self::Acm { db, .. } => Some(db.certificate.as_str()),
+            Self::Acm { db, .. } | Self::S3 { db, .. } => Some(db.certificate.as_str()),
             Self::File { .. } => None,
         }
     }
 
     pub fn cert_chain_pem(&self) -> Option<&str> {
         match self {
-            Self::Acm { db, .. } => Some(db.certificate_chain.as_str()),
+            Self::Acm { db, .. } | Self::S3 { db, .. } => Some(db.certificate_chain.as_str()),
             Self::File { .. } => None,
         }
     }
@@ -158,6 +203,31 @@ impl DbSource {
             ));
         }
         serde_json::from_slice::<AcmDb>(output.stdout.as_slice()).map_err(Error::AcmDbParseError)
+    }
+
+    fn fetch_s3_db(bucket_name: &str, path: &str) -> Result<AcmDb, Error> {
+        debug!("Fetching cert from s3: {}/{}", bucket_name, path);
+        let s3_url = format!(
+            "s3://{}/{}",
+            bucket_name,
+            path,
+        );
+        let output = Command::new("aws")
+            .arg("s3")
+            .args(&[
+                "--region",
+                imds::region().map_err(Error::ImdsError)?.as_str(),
+            ])
+            .args(&["cp", s3_url.as_str(), "-"])
+            .output()
+            .map_err(Error::AwsCliExecError)?;
+        if !output.status.success() {
+            return Err(Error::S3DbFetchError(
+                output.status.code(),
+                String::from_utf8_lossy(output.stderr.as_slice()).to_string(),
+            ));
+        }
+        serde_json::from_slice::<S3Db>(output.stdout.as_slice()).map_err(Error::S3DbParseError)
     }
 
     fn fetch_file_db(path: &str) -> Result<FileDb, Error> {

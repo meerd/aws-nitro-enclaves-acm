@@ -49,7 +49,7 @@ tokens:
         # development and testing purposes, and should not be used in
         # production environments.
         #
-        # Note: This S3 bucket  must have been associated with the
+        # Note: This S3 bucket must have been associated with the
         #       IAM role assigned to the instance on which ACM for
         #       Nitro Enclaves is run.
         #bucket_name: ""

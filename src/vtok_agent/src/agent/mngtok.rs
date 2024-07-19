@@ -383,9 +383,12 @@ impl ManagedToken {
                             .open(cert_path.as_str())
                             .and_then(|mut file| {
                                 file.write_all(cert_pem.as_bytes())?;
+                                file.write_all(b"\n")?;
                                 if let Some(chain_pem) = self.db.cert_chain_pem() {
                                     file.write_all(chain_pem.as_bytes())?;
                                 }
+                                info!("Writing to the cert path: {}", cert_path);
+                                file.sync_all()?;
                                 Ok(())
                             })
                             .map_err(Error::TargetIoError)?;

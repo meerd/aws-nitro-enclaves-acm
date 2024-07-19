@@ -8,8 +8,9 @@ use std::process::Command;
 /// - the provisioning/rpc server
 /// - the p11-kit server
 fn main() {
-    Command::new("p11-kit")
-        .args(&[
+    let mut cmd = Command::new("p11-kit");
+
+    cmd.args(&[
             "server",
             "-n",
             "vsock:port=9999",
@@ -18,9 +19,13 @@ fn main() {
             "-f",
             "-v",
             "pkcs11:",
-        ])
-        .spawn()
+        ]);
+
+    cmd.env("P11_KIT_STRICT", "yes");
+
+    cmd.spawn()
         .expect("p11-kit server failed to start.");
+
     Command::new("p11ne-server")
         .args(&["vsock", "10000"])
         .spawn()

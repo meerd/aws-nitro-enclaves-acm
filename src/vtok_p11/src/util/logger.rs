@@ -3,6 +3,9 @@
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
+extern crate chrono;
+use chrono::offset::Local;
+
 pub struct Logger;
 
 impl Logger {
@@ -18,7 +21,8 @@ impl Logger {
 
 impl Log for Logger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Error
+        //metadata.level() <= Level::Error
+        true
     }
 
     fn flush(&self) {}
@@ -26,8 +30,9 @@ impl Log for Logger {
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
             eprintln!(
-                "{:8} {}:{} {}",
+                "{:8} {} | {}:{} {}",
                 record.metadata().level(),
+                Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
                 record.file().unwrap(),
                 record.line().unwrap(),
                 record.args()

@@ -24,7 +24,8 @@ pub mod defs {
     /// Token expiration time, in seconds. A refresh operation (i.e. reattestation) MUST be
     /// performed before this timer expires. Otherwise, the token will be automatically removed
     /// from its slot.
-    pub const TOKEN_EXPIRY_SECS: u64 = 48 * 3600;
+    //pub const TOKEN_EXPIRY_SECS: u64 = 48 * 3600;
+    pub const TOKEN_EXPIRY_SECS: u64 = 60;
     /// PKCS#11 token model, as reported by vtok_p11.
     pub const TOKEN_MODEL: &str = "p11ne-token";
     /// Minimum length (in bytes) of a token PIN.

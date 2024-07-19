@@ -83,6 +83,7 @@ pub fn run_enclave(
         .args(&["--eif-path", image_path])
         .args(&["--cpu-count", &format!("{}", cpu_count)])
         .args(&["--memory", &format!("{}", memory_mib)])
+        .args(&["--debug-mode"])
         .output()
         .map_err(Error::ExecError)?;
     if !output.status.success() {

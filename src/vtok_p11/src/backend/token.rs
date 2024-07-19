@@ -55,6 +55,31 @@ impl Token {
         })
     }
 
+    pub fn has_keys(&self, keys: &Vec<config::PrivateKey>) -> bool {
+        //TODO: Optimize
+        //TODO: Add support for EcPrivateKey
+        let mut nb_matched = 0;
+
+        if let Some(db) = self.db.as_ref() {
+            nb_matched = db.enumerate()
+                .filter_map(|(_, obj)| match obj.kind() {
+                    ObjectKind::RsaPrivateKey(pem) => {
+                        let mut matched = false;
+                        keys.iter().for_each(|key| {
+                            if key.pem == *pem {
+                                trace!("Matching keys: {} - {}", key.pem, *pem);
+                                matched = true;
+                            }
+                        });
+                        if matched { Some(true) } else { None }
+                    },
+                    _ => None,
+                }).count();
+        }
+
+        nb_matched == keys.len()
+    }
+
     pub fn ck_info(&self) -> pkcs11::CK_TOKEN_INFO {
         let mut flags = match self.db.as_ref() {
             Some(db) => {
@@ -104,6 +129,36 @@ impl Token {
 
     pub fn has_expired(&self) -> bool {
         util::time::monotonic_secs() > self.expiry_ts
+    }
+
+    pub fn try_refresh(&mut self, new_expiry_ts: u64) {
+        let needs_refresh = new_expiry_ts != self.expiry_ts;
+
+        if needs_refresh {
+            trace!("Refreshing token: {} with new expiry_ts: {}.", self.label, new_expiry_ts);
+            self.expiry_ts = new_expiry_ts;
+        }
+    }
+
+    pub fn try_update(&mut self, new_token_config: &config::Token) -> Result<bool> {
+        let needs_update = !self.has_keys(&new_token_config.private_keys);
+
+        if needs_update {
+            trace!(
+                "Token keys have been updated for token: {}",
+                self.label
+            );
+
+            // The certificate appears to have been updated. Close all existing sessions and
+            // reload the object data from the database to ensure it's up-to-date.
+            self.db = Some(Db::from_token_config(new_token_config).map_err(Error::DbLoad)?);
+            self.close_all_sessions();
+            self.try_refresh(new_token_config.expiry_ts);
+
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     pub fn open_session(&mut self, handle: pkcs11::CK_SESSION_HANDLE) -> Result<()> {
